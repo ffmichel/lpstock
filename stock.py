@@ -139,7 +139,7 @@ for symbol in wallet.all_symbols:
     floor_num_stocks = int(math.floor(num_stocks))
     equity = floor_num_stocks * value
     percentage = (equity / new_value) * 100.
-    pdiff = percent(abs(percentage - target))
+    pdiff = percent(percentage - target)
     name = portfolio._shares.get_name(symbol)
     num_to_buy = floor_num_stocks - portfolio._portfolio_dict[symbol]
 
@@ -147,7 +147,7 @@ for symbol in wallet.all_symbols:
 
 total_bought = sum(item.num_to_buy * portfolio._shares.get_price(item.symbol) for item in new_portfolio_diffs)
 reco = dict()
-for item in sorted(new_portfolio_diffs, key=operator.attrgetter('percentage_diff'), reverse=True):
+for item in sorted(new_portfolio_diffs, key=operator.attrgetter('percentage_diff')):
     new_total = total_bought + portfolio._shares.get_price(item.symbol)
     if new_total <= new_influx:
         reco[item.symbol] = item.num_to_buy + 1
