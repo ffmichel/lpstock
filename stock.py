@@ -133,15 +133,15 @@ PDiff = collections.namedtuple('PDiff',
                                ['symbol', 'percentage_diff', 'num_to_buy'])
 new_portfolio_diffs = list()
 for symbol in wallet.all_symbols:
-    target = wallet.target(symbol)
-    value = portfolio._shares.get_price(symbol)
-    num_stocks = new_value * target / (value * 100.)
+    stock_target = wallet.target(symbol)
+    stock_value = portfolio._shares.get_price(symbol)
+    num_stocks = new_value * stock_target / (stock_value * 100.)
     floor_num_stocks = int(math.floor(num_stocks))
-    equity = floor_num_stocks * value
+    equity = floor_num_stocks * stock_value
     percentage = (equity / new_value) * 100.
-    pdiff = percent(percentage - target)
+    pdiff = percent(percentage - stock_target)
     name = portfolio._shares.get_name(symbol)
-    num_to_buy = floor_num_stocks - portfolio._portfolio_dict[symbol]
+    num_to_buy = max(floor_num_stocks - portfolio._portfolio_dict[symbol], 0)
 
     new_portfolio_diffs.append(PDiff(symbol=symbol, percentage_diff=pdiff._value, num_to_buy=num_to_buy))
 
