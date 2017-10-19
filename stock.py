@@ -1,8 +1,6 @@
 import google_parser as gp
 import copy
 import json
-import math
-import collections
 import operator
 import sys
 
@@ -45,125 +43,176 @@ class Portfolio(object):
     def all_symbols(self):
         return self._portfolio_dict.keys()
 
+    def stock_price(self, symbol):
+        return self._shares.get_price(symbol)
+
+    def num_stocks(self, symbol):
+        return self._portfolio_dict[symbol]
+
+    def full_name(self, symbol):
+        return self._shares.get_name(symbol)
+
 
 class Category(object):
-    def __init__(self, name, portfolio, symbols={}, children={}, target_percentage=None):
+    def __init__(self, name, portfolio, percentage, children=[], symbols={}):
         self.name = name
-        self._portfolio = portfolio
-        self._symbols = symbols
-        self._children = children
-        self._target_precentage = target_percentage
+        self.portfolio = portfolio
+        self.percentage = percentage
+        self.symbols = symbols
+        self.children = children
+
+    def __iter__(self):
+        yield self
+        for child in self.children:
+            for grand_child in child:
+                yield grand_child
+
+    def child(self, name):
+        return next((child for child in self if child.name == name), None)
+
+    @staticmethod
+    def has_symbols(allocation, portfolio):
+        return any(key in portfolio.all_symbols for key in allocation)
+
+    @staticmethod
+    def has_children(allocation, portfolio):
+        return any(key not in portfolio.all_symbols for key in allocation)
+
+    @classmethod
+    def from_dict(cls, name, portfolio, percentage, all_allocations):
+        symbols = {}
+        allocation = all_allocations[name]
+        if Category.has_symbols(allocation, portfolio):
+            symbols = {
+                symbol: percentage
+                for symbol, percentage in allocation.items()
+                if symbol in portfolio.all_symbols
+            }
+
+        children = []
+        if Category.has_children(allocation, portfolio):
+            children = [
+                Category.from_dict(
+                    name=cat_name,
+                    percentage=cat_percentage,
+                    portfolio=portfolio,
+                    all_allocations=all_allocations)
+                for cat_name, cat_percentage in allocation.items()
+            ]
+        cls = Category(
+            name=name,
+            portfolio=portfolio,
+            percentage=percentage,
+            children=children,
+            symbols=symbols)
+        return cls
 
     @property
     def total_value(self):
-        return float(sum(self._portfolio.equity(symbol)
-                         for symbol in self._symbols) +
-                     sum(child.total_value
-                         for child in self._children))
+        return float(
+            sum(self.portfolio.equity(symbol) for symbol in self.symbols) +
+            sum(child.total_value for child in self.children))
 
     @property
     def all_symbols(self):
-        ret = copy.deepcopy(self._symbols)
+        ret = copy.deepcopy(self.symbols)
         # TODO make this nicer
-        for child in self._children:
+        for child in self.children:
             ret.update(child.all_symbols)
         return ret
 
-    @property
-    def all_children(self):
-        return [child.name for child in self._children]
-
     def percentage(self, symbol):
-        return percent(self._portfolio.equity(symbol) * 100. / self.total_value)
+        return self.portfolio.equity(symbol) * 100. / self.total_value
+
+    def delta_percentage(self, symbol, delta_stocks, new_total_value):
+        stock_equity = self.portfolio.equity(symbol)
+        new_stock_equity = stock_equity + self.portfolio.stock_price(
+            symbol) * delta_stocks
+        return new_stock_equity * 100. / float(new_total_value)
+
+    def percentage_difference(self, symbol, delta_stocks, new_total_value):
+        return self.target(symbol) - self.delta_percentage(
+            symbol, delta_stocks, new_total_value)
 
     def target(self, symbol):
-        if symbol in self._symbols:
-            return float(self._symbols[symbol])
-        for child in self._children:
+        if symbol in self.symbols:
+            return float(self.symbols[symbol])
+        for child in self.children:
             if symbol in child.all_symbols:
-                return (float(self._children[child]) * child.target(symbol) / 100.)
+                return (float(child.percentage) * child.target(symbol) / 100.)
 
-    def proportion_children(self, child):
+    def proportion_child(self, child):
         return percent(child.total_value * 100. / self.total_value)
 
+    def num_new_stocks_from_target(self, symbol, influx):
+        new_amount = influx + self.total_value
 
-with open('asset.json', 'r') as infile:
-    asset_data = json.load(infile)
+        stock_target = self.target(symbol)
+        amount_available_for_symbol = float(new_amount) * stock_target / 100.
 
-portfolio_dict = asset_data['portfolio']
-allocation = asset_data['allocation']
-
-portfolio = Portfolio(portfolio_dict)
-wallet_dict = dict()
-key_list = allocation.keys()
-
-
-def is_leaf(allocation, key):
-    section = allocation[key]
-    return all(s_key not in allocation for s_key in section)
+        stock_value = portfolio.stock_price(symbol)
+        num_stocks = amount_available_for_symbol // stock_value
+        return num_stocks - self.portfolio.num_stocks(symbol)
 
 
-while(key_list):
-    #  import ipdb; ipdb.set_trace() # BREAKPOINT
-    key = key_list.pop(0)
-    if is_leaf(allocation, key):
-        wallet_dict[key] = Category(name=key, portfolio=portfolio,
-                                    symbols=allocation[key])
-    else:
-        section_keys = allocation[key].keys()
-        if all(k in wallet_dict for k in section_keys):
-            wallet_dict[key] = Category(name=key, portfolio=portfolio,
-                                        children={wallet_dict[k]: allocation[key][k]
-                                                  for k in section_keys})
-        else:
-            key_list.append(key)
+def make_recommendation(influx, wallet):
+    return {
+        symbol: wallet.num_new_stocks_from_target(symbol, influx)
+        for symbol in wallet.all_symbols
+    }
 
 
+def refine_recommendation(influx, recommendation, wallet):
+    total_bought = sum(num_to_buy * wallet.portfolio.stock_price(symbol)
+                       for symbol, num_to_buy in recommendation.items())
+    differences = [(symbol, wallet.percentage_difference(
+        symbol, num_to_buy, wallet.total_value + total_bought))
+                   for symbol, num_to_buy in recommendation.items()]
+
+    for symbol, _ in sorted(differences, key=operator.itemgetter(1)):
+        new_total = total_bought + wallet.portfolio.stock_price(symbol)
+        if new_total <= new_influx:
+            recommendation[symbol] += 1
+            total_bought = new_total
+    return recommendation
 
 
+def display_recommendation(recommendation, wallet, final_value):
+    msg = ("{:<5} | {:<40}  | num to buy: {:<4} | cost {:<8} | "
+           "final_percentage {:<6} | target {:<6}")
+    for symbol, num_to_buy in recommendation.items():
+        name = wallet.portfolio.full_name(symbol)
+        price = wallet.portfolio.stock_price(symbol)
+        cost = price * num_to_buy
+        final_percentage = wallet.delta_percentage(
+            symbol=symbol,
+            delta_stocks=num_to_buy,
+            new_total_value=final_value)
+        print(msg.format(symbol, name, num_to_buy, cost, percent(final_percentage),
+                         wallet.target(symbol)))
 
-wallet = wallet_dict['Wallet']
 
+if __name__ == "__main__":
+    with open('asset.json', 'r') as infile:
+        asset_data = json.load(infile)
 
-new_influx = float(sys.argv[1])
+    portfolio_dict = asset_data['portfolio']
+    allocation = asset_data['allocation']
 
-new_value = new_influx + wallet.total_value
+    portfolio = Portfolio(portfolio_dict)
+    wallet = Category.from_dict('Wallet', portfolio, 100, allocation)
+    new_influx = float(sys.argv[1])
 
-PDiff = collections.namedtuple('PDiff',
-                               ['symbol', 'percentage_diff', 'num_to_buy'])
-new_portfolio_diffs = list()
-for symbol in wallet.all_symbols:
-    stock_target = wallet.target(symbol)
-    stock_value = portfolio._shares.get_price(symbol)
-    num_stocks = new_value * stock_target / (stock_value * 100.)
-    floor_num_stocks = int(math.floor(num_stocks))
-    equity = floor_num_stocks * stock_value
-    percentage = (equity / new_value) * 100.
-    pdiff = percent(percentage - stock_target)
-    name = portfolio._shares.get_name(symbol)
-    num_to_buy = max(floor_num_stocks - portfolio._portfolio_dict[symbol], 0)
+    new_value = new_influx + wallet.total_value
 
-    new_portfolio_diffs.append(PDiff(symbol=symbol, percentage_diff=pdiff._value, num_to_buy=num_to_buy))
+    recommendation = make_recommendation(new_influx, wallet)
+    recommendation = refine_recommendation(new_influx, recommendation, wallet)
 
-total_bought = sum(item.num_to_buy * portfolio._shares.get_price(item.symbol) for item in new_portfolio_diffs)
-reco = dict()
-for item in sorted(new_portfolio_diffs, key=operator.attrgetter('percentage_diff')):
-    new_total = total_bought + portfolio._shares.get_price(item.symbol)
-    if new_total <= new_influx:
-        reco[item.symbol] = item.num_to_buy + 1
-        total_bought = new_total
-    else:
-        reco[item.symbol] = item.num_to_buy
+    final_total_value = wallet.total_value + sum(
+        num_to_buy * wallet.portfolio.stock_price(symbol)
+        for symbol, num_to_buy in recommendation.items())
 
-final_total_value = total_bought + wallet.total_value
-unused = new_influx - total_bought
-for symbol, num in reco.iteritems():
-    name = portfolio._shares.get_name(symbol)
-    price = portfolio._shares.get_price(symbol)
-    cost = num * price
-    percentage = percent((cost + portfolio.equity(symbol)) * 100 / new_value)
-    target = wallet.target(symbol)
-    msg = "{:<5} | {:<40}  | num to buy: {:<3} | cost {:<8} | final_percentage {:<6} | target {:<6}"
-    print msg.format(symbol, name, num, cost, percentage, percent(target))
-print('Wallet current value: {}'.format(wallet.total_value))
-print('Wallet value with {} added: {}, remains {} unused'. format(new_influx, final_total_value, unused))
+    display_recommendation(recommendation, wallet, final_total_value)
+    print('Wallet current value: {}'.format(wallet.total_value))
+    print('Wallet value with {} added: {}, remains {} unused'.format(
+        new_influx, final_total_value, (wallet.total_value + new_influx - final_total_value)))
