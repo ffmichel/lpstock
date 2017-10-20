@@ -144,36 +144,75 @@ class Category(object):
     def proportion_child(self, child):
         return percent(child.total_value * 100. / self.total_value)
 
-    def num_new_stocks_from_target(self, symbol, influx):
-        new_amount = influx + self.total_value
 
-        stock_target = self.target(symbol)
-        amount_available_for_symbol = float(new_amount) * stock_target / 100.
+def num_new_stocks_from_target(target, symbol, portfolio, total_amount):
+    amount_available_for_symbol = float(total_amount) * target / 100.
 
-        stock_value = portfolio.stock_price(symbol)
-        num_stocks = amount_available_for_symbol // stock_value
-        return num_stocks - self.portfolio.num_stocks(symbol)
+    stock_value = portfolio.stock_price(symbol)
+    num_stocks = amount_available_for_symbol // stock_value
+    return num_stocks - portfolio.num_stocks(symbol)
+
+
+def is_improving_distance_to_target(target, portfolio, symbol, total_sum):
+    stock_price = portfolio.stock_price(symbol)
+    current_percentage = float(
+        stock_price * portfolio.num_stocks(symbol) * 100) / total_sum
+    delta = float(stock_price * 100) / total_sum
+    return abs(target - (current_percentage + delta)) <= abs(
+        target - current_percentage)
 
 
 def make_recommendation(influx, wallet):
+    total_amount = wallet.total_value + influx
     return {
-        symbol: wallet.num_new_stocks_from_target(symbol, influx)
+        symbol: num_new_stocks_from_target(
+            wallet.target(symbol), symbol, wallet.portfolio, total_amount)
         for symbol in wallet.all_symbols
     }
+
+
+def make_buy_recommendations(influx, wallet):
+    exclude = list()
+    discrepencies = dict()
+    new_total = wallet.total_value + influx
+    for symbol in wallet.all_symbols:
+        percentage = float(wallet.portfolio.equity(symbol) * 100) / new_total
+        if (percentage > wallet.target(symbol)
+                or not is_improving_distance_to_target(
+                    wallet.target(symbol), wallet.portfolio, symbol,
+                    new_total)):
+            exclude.append(symbol)
+        else:
+            discrepencies[symbol] = wallet.target(symbol) - percentage
+
+    recommendation = dict()
+    total_discrepency = sum(discrepencies.values())
+    for symbol in wallet.all_symbols:
+        if symbol in exclude:
+            recommendation[symbol] = 0
+        else:
+            target_amount = (
+                discrepencies[symbol] / total_discrepency) * influx
+            recommendation[symbol] = int(
+                target_amount // wallet.portfolio.stock_price(symbol))
+    return recommendation
 
 
 def refine_recommendation(influx, recommendation, wallet):
     total_bought = sum(num_to_buy * wallet.portfolio.stock_price(symbol)
                        for symbol, num_to_buy in recommendation.items())
+    new_total = total_bought + wallet.total_value
     differences = [(symbol, wallet.percentage_difference(
-        symbol, num_to_buy, wallet.total_value + total_bought))
+        symbol, num_to_buy, new_total))
                    for symbol, num_to_buy in recommendation.items()]
 
     for symbol, _ in sorted(differences, key=operator.itemgetter(1)):
-        new_total = total_bought + wallet.portfolio.stock_price(symbol)
-        if new_total <= new_influx:
+        prospective_total = total_bought + wallet.portfolio.stock_price(symbol)
+        if is_improving_distance_to_target(
+                wallet.target(symbol), wallet.portfolio, symbol,
+                new_total) and prospective_total <= influx:
             recommendation[symbol] += 1
-            total_bought = new_total
+            total_bought = prospective_total
     return recommendation
 
 
@@ -188,8 +227,8 @@ def display_recommendation(recommendation, wallet, final_value):
             symbol=symbol,
             delta_stocks=num_to_buy,
             new_total_value=final_value)
-        print(msg.format(symbol, name, num_to_buy, cost, percent(final_percentage),
-                         wallet.target(symbol)))
+        print(msg.format(symbol, name, num_to_buy, cost,
+                         percent(final_percentage), wallet.target(symbol)))
 
 
 if __name__ == "__main__":
@@ -205,7 +244,7 @@ if __name__ == "__main__":
 
     new_value = new_influx + wallet.total_value
 
-    recommendation = make_recommendation(new_influx, wallet)
+    recommendation = make_buy_recommendations(new_influx, wallet)
     recommendation = refine_recommendation(new_influx, recommendation, wallet)
 
     final_total_value = wallet.total_value + sum(
@@ -215,4 +254,5 @@ if __name__ == "__main__":
     display_recommendation(recommendation, wallet, final_total_value)
     print('Wallet current value: {}'.format(wallet.total_value))
     print('Wallet value with {} added: {}, remains {} unused'.format(
-        new_influx, final_total_value, (wallet.total_value + new_influx - final_total_value)))
+        new_influx, final_total_value,
+        (wallet.total_value + new_influx - final_total_value)))
