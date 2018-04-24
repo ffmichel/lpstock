@@ -1,19 +1,14 @@
-import requests
-import json
 import collections
-
+from pandas_datareader import data as web
 
 Quote = collections.namedtuple('Quote', ['name', 'value'])
 
 
 def get_quote(symbol):
-    url = 'https://finance.google.com/finance?q={}&output=json'
-    rsp = requests.get(url.format(symbol))
-    if rsp.status_code in (200,):
-        fin_data = json.loads(rsp.content[6:-2].decode('unicode_escape'))
-        return Quote(name=fin_data['name'], value=float(fin_data['l']))
-    else:
-        raise ValueError()
+    quote = web.get_quotes_robinhood(str(symbol))
+    return Quote(
+        name=symbol,
+        value=float(quote.loc['last_trade_price'].iloc[0]))
 
 
 if __name__ == '__main__':
