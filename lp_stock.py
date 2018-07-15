@@ -5,7 +5,6 @@ import collections
 import operator
 
 import networkx as nx
-import matplotlib.pyplot as plt
 import numpy as np
 import yaml
 from scipy import optimize
