@@ -2,3 +2,4 @@ networkx
 numpy
 pyyaml
 scipy
+pandas_datareader
