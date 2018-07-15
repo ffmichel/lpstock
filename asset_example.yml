@@ -1,0 +1,74 @@
+# Content of your portfolio:
+# Ticker: number shares.
+portfolio:
+  AAPL: 1
+  BLV: 1
+  VOO: 1
+  VB: 1
+  SCHA: 1
+  VTWO: 1
+  SCHH: 1
+  IXUS: 1
+  VEU: 1
+  VNQ: 1
+  VOOG: 0
+  401K_bond: 100
+  401K_stock: 100
+
+# Assets thar are not tracked by NYSE.
+hardcoded_ticker_values:
+  401K_bond: 1
+  401K_stock: 1
+
+# Tickers on which we run optimization.
+# Subset of portfolio tickers.
+tickers_to_allocate:
+  - VOOG
+  - VTWO
+  - SCHA
+  - VB
+  - IXUS
+  - VEU
+
+# Tree declaration.
+tree:
+  Wallet:
+    - Bonds
+    - Stocks
+  Bonds:
+    - BLV
+    - 401K_bond
+  Stocks:
+    - Large-Cap
+    - Small-Cap
+    - REIT
+    - International
+  Large-Cap:
+    - VOO
+    - VOOG
+    - 401K_stock
+    - AAPL
+  Small-Cap:
+    - VB
+    - SCHA
+    - VTWO
+  REIT:
+    - SCHH
+    - VNQ
+  International:
+    - IXUS
+    - VEU
+
+# Allocation percentage per class in the tree.
+# Not all percentages are required.
+allocations:
+  Bonds: 14
+  Stocks: 86
+  Large-Cap: 83
+  Small-Cap: 10
+  International: 7
+  IXUS: 80
+  VEU: 20
+  VTWO: 80
+  SCHA: 10
+  VB: 10
