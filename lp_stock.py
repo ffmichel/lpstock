@@ -150,8 +150,24 @@ def optimize_allocations(tickers_to_allocate, amount_to_allocate,
         max_allocation_by_ticker[ticker] for ticker in tickers_to_allocate
     ])
 
-    bounds = [(0, None) for _ in tickers_to_allocate]
+    bounds = [[0, None] for _ in tickers_to_allocate]
     res = optimize.linprog(c, A_ub=A, b_ub=b, bounds=bounds)
+    # branch and bound:
+    for idx in range(len(tickers_to_allocate)):
+        new_bounds_left = copy.deepcopy(bounds)
+        new_bounds_left[idx][0] = int(res.x[idx]) + 1
+        res_left = optimize.linprog(c, A_ub=A, b_ub=b, bounds=new_bounds_left)
+        new_bounds_right = copy.deepcopy(bounds)
+        new_bounds_right[idx][1] = int(res.x[idx])
+        res_right = optimize.linprog(c, A_ub=A, b_ub=b, bounds=new_bounds_right)
+        if res_left.fun < res_right.fun:
+            res = res_left
+            bounds = copy.deepcopy(new_bounds_left)
+            bounds[idx][1] = bounds[idx][0]
+        else:
+            res = res_right
+            bounds = copy.deepcopy(new_bounds_right)
+            bounds[idx][0] = bounds[idx][1]
     return dict(zip(tickers_to_allocate, res.x))
 
 
