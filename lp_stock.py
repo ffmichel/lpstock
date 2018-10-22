@@ -92,47 +92,53 @@ def add_equity(graph, root, portfolio, price_by_ticker, graph_field_name):
                 graph.nodes[node][graph_field_name] = equity
 
 
-def max_allocations(graph, root, tickers_to_allocate, amount_to_allocate):
+def node_max_allocation(node_allocation, parent_max_allocation, parent_equity,
+                        node_equity):
+    return max(
+        min(
+            node_allocation * (parent_max_allocation + parent_equity) -
+            node_equity, parent_max_allocation), 0)
+
+
+def add_max_allocation(graph, root, amount_to_allocate):
+    graph.nodes[root]['max_allocation'] = amount_to_allocate
+    for edge in nx.bfs_edges(graph, root):
+        parent_max_allocation = graph.nodes[edge[0]]['max_allocation']
+        parent_equity = graph.nodes[edge[0]]['equity']
+        child_allocation = graph.nodes[edge[1]]['allocation']
+        if child_allocation is None:
+            child_allocation = 1
+        child_equity = graph.nodes[edge[1]]['equity']
+        graph.nodes[edge[1]]['max_allocation'] = node_max_allocation(
+            node_allocation=child_allocation,
+            parent_max_allocation=parent_max_allocation,
+            parent_equity=parent_equity,
+            node_equity=child_equity)
+
+
+def generate_constraints(graph, root, tickers_to_allocate, amount_to_allocate):
     # Compute the maximum that we could allocate to each ticker given percentages.
 
-    # first: find tickers for which we have a percentage:
-    percentage_tickers = [
-        ticker for ticker in tickers_to_allocate
-        if graph.nodes[ticker]['percentage'] is not None
-    ]
+    add_max_allocation(
+        graph=graph, root=root, amount_to_allocate=amount_to_allocate)
 
-    # compute max for them:
-    max_allocation_per_ticker = dict()
-    root_equity = graph.nodes[root]['equity']
-    for ticker in percentage_tickers:
-        node_percentage = graph.nodes[ticker]['percentage']
-        node_equity = graph.nodes[ticker]['equity']
-        max_allocation_per_ticker[ticker] = max(
-            (root_equity + amount_to_allocate) * node_percentage - node_equity,
-            0)
+    nodes_max_pair_list = set([((ticker, ),
+                                graph.nodes[ticker]['max_allocation'])
+                               for ticker in tickers_to_allocate])
+    for edge in nx.bfs_edges(graph, root):
+        node = edge[0]
+        node_list = tuple([
+            ticker for ticker in tickers_to_allocate
+            if ticker in nx.descendants(graph, node)
+        ])
+        max_amount = graph.nodes[node]['max_allocation']
+        if len(node_list) > 2:
+            nodes_max_pair_list.add((node_list, max_amount))
 
-    # second : compute max for tickers for which we do not have percentage:
-    non_percentage_tickers = set(tickers_to_allocate) - set(percentage_tickers)
-    for ticker in non_percentage_tickers:
-        node_equity = graph.nodes[ticker]['equity']
-        node_parent = next(graph.predecessors(ticker))
-        siblings = [
-            node for node in graph.successors(node_parent) if node != ticker
-        ]
-        parent_percentage = graph.nodes[node_parent]['percentage']
-        parent_max = (root_equity + amount_to_allocate) * parent_percentage
-        siblings_max = sum(
-            max_allocation_per_ticker[sibling] for sibling in siblings
-            if sibling in max_allocation_per_ticker)
-        siblings_equity = sum(
-            graph.nodes[sibling]['equity'] for sibling in siblings)
-        max_allocation_per_ticker[ticker] = max(
-            parent_max - siblings_max - siblings_equity - node_equity, 0)
-    return max_allocation_per_ticker
+    return list(nodes_max_pair_list)
 
 
-def optimize_allocations(tickers_to_allocate, amount_to_allocate,
-                         price_by_ticker, max_allocation_by_ticker):
+def optimize_allocations(tickers_to_allocate, price_by_ticker, constraints):
     # linear program
     # vector of stock prices
     stock_prices = np.array(
@@ -140,15 +146,15 @@ def optimize_allocations(tickers_to_allocate, amount_to_allocate,
     c = -1 * stock_prices
 
     # Matrix of latent space:
-    A = np.zeros((len(tickers_to_allocate) + 1, len(tickers_to_allocate)))
-    A[0, :] = stock_prices
-    diag_indices = np.diag_indices_from(A[1:, :])
-    A[diag_indices[0] + 1, diag_indices[1]] = stock_prices
+    A = np.zeros((len(constraints), len(tickers_to_allocate)))
+    for i, constraint in enumerate(constraints):
+        A[i, :] = [
+            price_by_ticker[tick] if tick in constraint[0] else 0
+            for tick in tickers_to_allocate
+        ]
 
     # vector of constraints
-    b = np.array([amount_to_allocate] + [
-        max_allocation_by_ticker[ticker] for ticker in tickers_to_allocate
-    ])
+    b = np.array([constraint[1] for constraint in constraints])
 
     bounds = [[0, None] for _ in tickers_to_allocate]
     res = optimize.linprog(c, A_ub=A, b_ub=b, bounds=bounds)
@@ -159,7 +165,8 @@ def optimize_allocations(tickers_to_allocate, amount_to_allocate,
         res_left = optimize.linprog(c, A_ub=A, b_ub=b, bounds=new_bounds_left)
         new_bounds_right = copy.deepcopy(bounds)
         new_bounds_right[idx][1] = int(res.x[idx])
-        res_right = optimize.linprog(c, A_ub=A, b_ub=b, bounds=new_bounds_right)
+        res_right = optimize.linprog(
+            c, A_ub=A, b_ub=b, bounds=new_bounds_right)
         if res_left.fun < res_right.fun:
             res = res_left
             bounds = copy.deepcopy(new_bounds_left)
@@ -222,12 +229,11 @@ def run():
     value_by_ticker = price_per_ticker(portfolio, hardcoded_ticker_values)
     add_equity(G, root, portfolio, value_by_ticker, 'equity')
 
-    max_allocation_per_ticker = max_allocations(G, root, tickers_to_allocate,
-                                                amount_to_allocate)
+    constraints = generate_constraints(G, root, tickers_to_allocate,
+                                       amount_to_allocate)
 
-    optimal_allocations = optimize_allocations(
-        tickers_to_allocate, amount_to_allocate, value_by_ticker,
-        max_allocation_per_ticker)
+    optimal_allocations = optimize_allocations(tickers_to_allocate,
+                                               value_by_ticker, constraints)
 
     node_by_length = node_by_distance_to_root(G, root)
 
@@ -268,7 +274,6 @@ def run():
 
             shares = str(portfolio.get(node, ''))
             share_increase = portfolio_change.get(node, 0)
-            share_increase_str = ''
             if share_increase >= 1:
                 shares = partly_colored_str_in_cell(
                     shares, ' + {}'.format(share_increase), 20, red_str)
@@ -287,7 +292,7 @@ def run():
 
     print('\n After purchase, ${:,.2f} will be left.'.format(
         amount_to_allocate - sum(value_by_ticker[sym] * portfolio_change[sym]
-            for sym in portfolio_change)))
+                                 for sym in portfolio_change)))
 
 
 if __name__ == '__main__':

@@ -7,7 +7,12 @@ import sys
 
 class Shares(object):
     def __init__(self, symbols):
-        self._quotes = {symbol: gp.get_quote(symbol) for symbol in symbols}
+        symbols_401K = ["401K_bond", "401K_stock"]
+        self._quotes = {
+            symbol: gp.get_quote(symbol)
+            for symbol in symbols if symbol not in symbols_401K
+        }
+        self._quotes.update({sym: gp.Quote(sym, 1) for sym in symbols_401K})
 
     def get_price(self, symbol):
         return self._quotes[symbol].value
@@ -110,8 +115,9 @@ class Category(object):
     @property
     def total_value(self):
         return float(
-            sum(self.portfolio.equity(symbol) for symbol in self.symbols) +
-            sum(child.total_value for child in self.children))
+            sum(self.portfolio.equity(symbol)
+                for symbol in self.symbols) + sum(child.total_value
+                                                  for child in self.children))
 
     @property
     def all_symbols(self):
@@ -202,8 +208,9 @@ def refine_recommendation(influx, recommendation, wallet):
     total_bought = sum(num_to_buy * wallet.portfolio.stock_price(symbol)
                        for symbol, num_to_buy in recommendation.items())
     new_total = total_bought + wallet.total_value
-    differences = [(symbol, wallet.percentage_difference(
-        symbol, num_to_buy, new_total))
+    differences = [(symbol,
+                    wallet.percentage_difference(symbol, num_to_buy,
+                                                 new_total))
                    for symbol, num_to_buy in recommendation.items()]
 
     for symbol, _ in sorted(differences, key=operator.itemgetter(1)):
@@ -217,8 +224,8 @@ def refine_recommendation(influx, recommendation, wallet):
 
 
 def display_recommendation(recommendation, wallet, final_value):
-    msg = ("{:<5} | {:<40}  | num to buy: {:<4} | cost {:<8} | "
-           "final_percentage {:<6} | target {:<6}")
+    msg = ("{:<40}  | num to buy: {:<4} | cost {:<8,.2f} | "
+           "final_percentage {:>6} | target {:>6}")
     for symbol, num_to_buy in recommendation.items():
         name = wallet.portfolio.full_name(symbol)
         price = wallet.portfolio.stock_price(symbol)
@@ -227,8 +234,8 @@ def display_recommendation(recommendation, wallet, final_value):
             symbol=symbol,
             delta_stocks=num_to_buy,
             new_total_value=final_value)
-        print(msg.format(symbol, name, num_to_buy, cost,
-                         percent(final_percentage), wallet.target(symbol)))
+        print(msg.format(name, num_to_buy, cost, percent(final_percentage),
+                         percent(wallet.target(symbol))))
 
 
 if __name__ == "__main__":
@@ -252,7 +259,7 @@ if __name__ == "__main__":
         for symbol, num_to_buy in recommendation.items())
 
     display_recommendation(recommendation, wallet, final_total_value)
-    print('Wallet current value: {}'.format(wallet.total_value))
-    print('Wallet value with {} added: {}, remains {} unused'.format(
-        new_influx, final_total_value,
-        (wallet.total_value + new_influx - final_total_value)))
+    print('Wallet current value: {:,.2f}'.format(wallet.total_value))
+    print('Wallet value with {:,.2f} added: {:,.2f}, remains {:,.2f} unused'.
+          format(new_influx, final_total_value,
+                 (wallet.total_value + new_influx - final_total_value)))
