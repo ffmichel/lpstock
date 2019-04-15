@@ -1,0 +1,20 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[dev-packages]
+ipython = "*"
+yapf = "*"
+flake8 = "*"
+jedi = "*"
+
+[packages]
+stocks = {path = "./stocks",editable = true}
+
+[requires]
+python_version = '3.7'
+
+[scripts]
+format = "yapf -ri ."
+stock = "./lp_stock.py --assets_csv ${ASSET_DIR}/assets.csv --allocation_graph_csv ${ASSET_DIR}/allocation_graph.csv"
